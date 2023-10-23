@@ -1,5 +1,5 @@
-import config from "../config"
-import mysql from "promise-mysql"
+const config = require( "../config")
+const  mysql = require( "promise-mysql")
 
 const connection = mysql.createConnection({
     host: config.HOST,

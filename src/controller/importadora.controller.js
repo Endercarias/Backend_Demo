@@ -1,7 +1,8 @@
 const jwt = require("jsonwebtoken")
-import { promisify } from 'util';
+const {promisify} = require('util')
 const bcryptjs = require("bcryptjs")
-import { getConnection } from "../database/importadora.database"
+const  { getConnection } = require("../database/importadora.database")
+
 
 const getRaiz = async (req, res) => {
     res.send("estamos en la raiz")
@@ -31,19 +32,6 @@ const readUser = async (req, res) => {
     }
 }
 
-const readUser1 = async (req, res) => {
-    try {
-        const email  = req.params.idUser
-
-        const connection = await getConnection()
-        const query = await connection.query("select * from usuario WHERE Email = ?;", [email])
-
-        res.send(query)
-    } catch (error) {
-        res.status(500).json({Message: error.message})
-    }
-}
-
 const login = async (req, res) => {
     try {
         const { email, contrasena} = req.body
@@ -52,13 +40,16 @@ const login = async (req, res) => {
         const query = await connection.query("select * from usuario WHERE Email = ?;", [email], 
         async (error, result) => {
             if (result.length == 0 || ! (await bcryptjs.compare(contrasena, result[0].contrasena))) {
-                res.status(500).json({Message: "Contraseña Incorrecta"})
+                res.status(500).json({Message: "Contraseña Incorrecta", status: false})
             }else{
                 //inicio de sesion ok
                 const id = result[0].Email
                 const token = jwt.sign({id:id}, process.env.JWT_SECRET, {
                     expiresIn:process.env.JWT_TIME_EXPIRES
                 })
+                const idUser = result[0].idUsuario
+
+                
                 //TOKEN sin fecha de expiracion:
                 //const token = jwt.sign({id:id}, process.env.JWT_SECRET)
                 console.log("token generado: ", token, " de usuario: ", id)
@@ -70,7 +61,10 @@ const login = async (req, res) => {
                 res.cookie('JWT', token, cookiesOptions)
                 res.send({
                     Message: "Ingreso Exitosamente!",
-                    token: token
+                    token: token,
+                    idUsuario: idUser,
+                    rol: result[0].idRol,
+                    status: true
                 })
             }
         } )
@@ -81,13 +75,13 @@ const login = async (req, res) => {
     }
 }
 
+
 /**
- * este metodo lo que hace es verificar la autenticacion de los usuarios
+ * este metodo lo que haces es verificar la autenticacion de los usuarios
  * @param {email, nombre, apellido, contrasena, idRol} req Datos recibidos de la peticion
  * @param {message} res Muestra el usuario ingresado a la DB
  */
 const isAuthenticated = async (req, res, next) => {
-    console.log(req.headers.jwt)
     if (req.headers.jwt) {
         try {
             const decodificated = await promisify(jwt.verify)(req.headers.jwt, process.env.JWT_SECRET)
@@ -99,11 +93,10 @@ const isAuthenticated = async (req, res, next) => {
                 return next()
             })
         } catch (error) {
-            res.status(500).json({Message: error.message})
-            return next()
+            res.json({Message: error.message})
         }
     }else{
-        res.status(404).json({Message: "Falta Logearse", RedirectUrl: "/api/importadora/login"})
+        res.json({Message: "Falta Logearse", RedirectUrl: "/api/importadora/login"})
     }
 }
 
@@ -191,7 +184,10 @@ const readCars = async (req, res) => {
     try {
         const connection = await getConnection()
         const query = await connection.query("select * from carro;")
-
+        for (let index = 0; index < query.length; index++) {
+            let response = await connection.query(`SELECT * FROM importadora_proyecto.imagenes where idCarro = ${query[index].idCarro}`)
+            query[index].imagenes = response
+        }
         res.send(query)
     } catch (error) {
         res.status(500).json({Message: error.message})
@@ -201,10 +197,14 @@ const readCars = async (req, res) => {
 const readCar = async (req, res) => {
     try {
         const idCarro  = req.params.idCar
-
+        console.log(idCarro)
         const connection = await getConnection()
         const query = await connection.query("select * from carro WHERE idCarro = ?;", [idCarro])
 
+        for (let index = 0; index < query.length; index++) {
+            let response = await connection.query(`SELECT * FROM importadora_proyecto.imagenes where idCarro = ${query[index].idCarro}`)
+            query[index].imagenes = response
+        }
         res.send(query)
     } catch (error) {
         res.status(500).json({Message: error.message})
@@ -213,16 +213,20 @@ const readCar = async (req, res) => {
 
 const createCar = async (req, res) => {
     try {
-
-        const { marca, linea, tipoVehiculo, modelo, descripccion, foto, precio, vendido } = req.body
-        const params = [ marca, linea, tipoVehiculo, modelo, descripccion, foto, precio, vendido ]
+        const { marca, linea, tipoVehiculo, modelo, descripccion, precio, vendido } = req.body
+        const params = [marca, linea, tipoVehiculo, modelo, descripccion, precio, vendido ]
 
         const connection = await getConnection()
-        const query = await connection.query("insert into carro(marca,linea,tipoVehiculo,modelo,descripccion,foto,precio,vendido) values(?,?,?,?,?,?,?,?);", params)
+        const Carro = await connection.query(`call importadora_proyecto.new_procedure(?,?,?,?,?,?,?,@uuidcaro);
+       `, params)
 
+        req.files.forEach(async x=>{
+            await connection.query(`INSERT INTO imagenes (name,idCarro) VALUES (?, ?);`, 
+                                    [x.filename, Carro[0][0].uuidCarro])
+        })
         res.json({message: "Carro: " +marca+" "+linea+ " ingresado exitosamente"})
     } catch (error) {
-        res.status(500).json({Message: error.message})
+        res.json({Message: error.message})
     }
 }
 
@@ -233,7 +237,9 @@ const deleteCar = async (req, res) => {
         const params = [idCar]
 
         const connection = await getConnection()
-        const query = await connection.query("DELETE FROM carro WHERE idCarro = ?;", params)
+
+        await connection.query("DELETE FROM importadora_proyecto.imagenes WHERE idCarro = ?;", params)
+        await connection.query("DELETE FROM carro WHERE idCarro = ?;", params)
 
         res.json({message: "Carro con id: " +idCar+ " Eliminado del registro de carros"})
     } catch (error) {
@@ -243,15 +249,17 @@ const deleteCar = async (req, res) => {
 
 const updateCar = async (req, res) => {
     try {
-
-        const { marca, linea, tipoVehiculo, modelo, descripccion, foto, precio, vendido, idCarro } = req.body
-        const params = [ marca, linea, tipoVehiculo, modelo, descripccion, foto, precio, vendido, idCarro ]
+        console.log(req.body)
+        const { marca, linea, tipoVehiculo, modelo, descripccion, precio, vendido, idCarro } = req.body
+        const params = [ marca, linea, tipoVehiculo, modelo, descripccion, precio, parseInt(vendido), idCarro ]
 
         const connection = await getConnection()
-        const query = await connection.query("UPDATE carro SET marca=?, linea=?, tipoVehiculo=?, modelo=?, descripccion=?, foto=?, precio=?, vendido=? WHERE idCarro=?;", params)
+        const query = await connection.query("UPDATE carro SET marca=?, linea=?, tipoVehiculo=?, modelo=?, descripccion=?, precio=?, vendido=? WHERE idCarro=?;", params)
 
-        res.json({message: "Carro: " +marca+" "+linea+ " actualizado exitosamente"})
+        res.send(query)
+        //res.json({message: "Carro: " +marca+" "+linea+ " actualizado exitosamente"})
     } catch (error) {
+        console.log(error.message)
         res.status(500).json({Message: error.message})
     }
 }
@@ -307,7 +315,91 @@ function formatDate(date) {
     return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
-export const methods = {
+const createCita = async (req, res) => {
+    try {
+        const { idCarro, fechaInicio, fechaFin, idEstadoCita, idUsuario } = req.body
+        const params = [idCarro, fechaInicio, fechaFin, idEstadoCita, idUsuario]
+
+        const connection = await getConnection()
+        const Cita = await connection.query(`call importadora_proyecto.new_procedure2(?,?,?,?,?,@uuidCita);
+       `, params)
+
+        
+        res.json({message: "Cita: " +idCarro+" "+idUsuario+ " ingresado exitosamente"})
+    } catch (error) {
+        res.json({Message: error.message})
+    }
+}
+
+const readCitas= async (req, res) => {
+    try {
+        const connection = await getConnection()
+        const query = await connection.query(`SELECT cita.idCita, 
+        carro.marca, 
+        carro.linea, 
+        carro.modelo, 
+        cita.fechaInicio, 
+        cita.fechaFin, 
+        estadocita.estado,
+        usuario.nombre,
+        usuario.apellido
+        FROM cita 
+        inner join carro on carro.idCarro =  cita.idCarro
+        inner join estadocita on cita.idEstadoCita = estadocita.idEstado
+        inner join usuario on cita.idUsuario =  usuario.idUsuario;`)
+        res.send(query)
+    } catch (error) {
+        res.status(500).json({Message: error.message})
+    }
+}
+
+const readCita = async (req, res) => {
+    try {
+        const idCarro  = req.params.idCar
+
+        const connection = await getConnection()
+        const query = await connection.query("select * from cita WHERE idCita = ?;", [idCita])
+        res.send(query)
+    } catch (error) {
+        res.status(500).json({Message: error.message})
+    }
+}
+
+const deleteCita = async (req, res) => {
+    try {
+        const connection = await getConnection()
+
+        const { idCita } = req.params
+        const query = await connection.query("DELETE FROM cita WHERE idCita = ?;", [idCita])
+
+        res.json({message: "Cita con id: " +idCita+ " Eliminado del registro de citas"})
+    } catch (error) {
+        res.status(500).json({Message: error.message})
+    }
+}
+
+
+const updateCita = async (req, res) => {
+    
+    try {
+        const connection = await getConnection()
+
+        const idCita = req.params.idCita;
+
+        const { idEstadoCita } = req.body
+        const params = [ parseInt(idEstadoCita), idCita]
+
+        const query = await connection.query("UPDATE cita SET idEstadoCita=? WHERE idCita=?;", params)
+
+        // const query = await connection.query("UPDATE cita SET(idCarro,fechaInicio,fechaFin,idEstadoCita,idUsuario) values(?,?,?,?,?) WHERE idCita=?;", params)
+
+        res.json({message: "Cita: " +idCita+" actualizado exitosamente"})
+    } catch (error) {
+        res.status(500).json({Message: error.message})
+    }
+}
+
+module.exports = {
     getRaiz,
     createUser,
     readUser,
@@ -325,4 +417,9 @@ export const methods = {
     logout,
     createCotizacion,
     readCotizacion,
+    createCita,
+    readCitas,
+    readCita,
+    deleteCita,
+    updateCita
 }

@@ -1,8 +1,8 @@
-import { config } from "dotenv"
+const  { config } = require( "dotenv")
 
 config()
 
-export default {
+module.exports = {
     HOST: process.env.HOST || "",
     DATABASE: process.env.DATABASE || "",
     USER: process.env.USER || "",
