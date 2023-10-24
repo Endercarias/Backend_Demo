@@ -37,41 +37,39 @@ const login = async (req, res) => {
         const { email, contrasena} = req.body
 
         const connection = await getConnection()
-        const query = await connection.query("select * from usuario WHERE Email = ?;", [email], 
-        async (error, result) => {
-            if (result.length == 0 || ! (await bcryptjs.compare(contrasena, result[0].contrasena))) {
-                res.status(500).json({Message: "Contraseña Incorrecta", status: false})
-            }else{
-                //inicio de sesion ok
-                const id = result[0].Email
-                const token = jwt.sign({id:id}, process.env.JWT_SECRET, {
-                    expiresIn:process.env.JWT_TIME_EXPIRES
-                })
-                const idUser = result[0].idUsuario
+        const [query] = await connection.query("select * from usuario WHERE Email = ?;", [email])
 
-                
-                //TOKEN sin fecha de expiracion:
-                //const token = jwt.sign({id:id}, process.env.JWT_SECRET)
-                console.log("token generado: ", token, " de usuario: ", id)
+        if (query.length == 0 || ! (await bcryptjs.compare(contrasena, query[0].contrasena))) {
+            res.status(500).json({Message: "Contraseña Incorrecta", status: false})
+        }else{
+            //inicio de sesion ok
+            const id = query[0].Email
+            const token = await jwt.sign({id:id}, process.env.JWT_SECRET, {
+                expiresIn:process.env.JWT_TIME_EXPIRES
+            })
+            const idUser = query[0].idUsuario
 
-                const cookiesOptions = {
-                    expires: new Date(Date.now()+process.env.JWT_COOKIE_EXPIRES*24*60*60*1000),
-                    httpOnly: true
-                }
-                res.cookie('JWT', token, cookiesOptions)
-                res.send({
-                    Message: "Ingreso Exitosamente!",
-                    token: token,
-                    idUsuario: idUser,
-                    rol: result[0].idRol,
-                    status: true
-                })
+            
+            //TOKEN sin fecha de expiracion:
+            //const token = jwt.sign({id:id}, process.env.JWT_SECRET)
+            console.log("token generado: ", token, " de usuario: ", id)
+
+            const cookiesOptions = {
+                expires: new Date(Date.now()+process.env.JWT_COOKIE_EXPIRES*24*60*60*1000),
+                httpOnly: true
             }
-        } )
-
-        res.send(query)
+            await res.cookie('JWT', token, cookiesOptions)
+            res.send({
+                Message: "Ingreso Exitosamente!",
+                token: token,
+                idUsuario: idUser,
+                rol: query[0].idRol,
+                status: true
+            })
+        }
+        
     } catch (error) {
-        res.status(500).json({Message: error.message})
+        res.send({Message: error.message})
     }
 }
 
@@ -86,12 +84,13 @@ const isAuthenticated = async (req, res, next) => {
         try {
             const decodificated = await promisify(jwt.verify)(req.headers.jwt, process.env.JWT_SECRET)
             const connection = await getConnection()
-            const query = await connection.query("select * from usuario WHERE Email = ?;", [decodificated.id], 
-            (error, result) => {
-                if(!result[0]){return next()}
-                req.Email = result[0]
-                return next()
-            })
+            const [query] = await connection.query("select * from usuario WHERE Email = ?;", [decodificated.id])
+           
+            if(!query[0]){return next()}
+
+            req.Email = query[0]
+            return next()
+           
         } catch (error) {
             res.json({Message: error.message})
         }
@@ -183,9 +182,9 @@ const updateUser = async (req, res) => {
 const readCars = async (req, res) => {
     try {
         const connection = await getConnection()
-        const query = await connection.query("select * from carro;")
+        const [query, files] = await connection.query("select * from carro;")
         for (let index = 0; index < query.length; index++) {
-            let response = await connection.query(`SELECT * FROM importadora_proyecto.imagenes where idCarro = ${query[index].idCarro}`)
+            let [response, files] = await connection.query(`SELECT * FROM imagenes where idCarro =?`,[query[index].idCarro])
             query[index].imagenes = response
         }
         res.send(query)
@@ -199,10 +198,10 @@ const readCar = async (req, res) => {
         const idCarro  = req.params.idCar
         console.log(idCarro)
         const connection = await getConnection()
-        const query = await connection.query("select * from carro WHERE idCarro = ?;", [idCarro])
+        const [query] = await connection.query("select * from carro WHERE idCarro = ?;", [idCarro])
 
         for (let index = 0; index < query.length; index++) {
-            let response = await connection.query(`SELECT * FROM importadora_proyecto.imagenes where idCarro = ${query[index].idCarro}`)
+            let [response] = await connection.query(`SELECT * FROM imagenes where idCarro = ?`, [query[index].idCarro])
             query[index].imagenes = response
         }
         res.send(query)
@@ -214,10 +213,10 @@ const readCar = async (req, res) => {
 const createCar = async (req, res) => {
     try {
         const { marca, linea, tipoVehiculo, modelo, descripccion, precio, vendido } = req.body
-        const params = [marca, linea, tipoVehiculo, modelo, descripccion, precio, vendido ]
+        const params = [marca, linea, tipoVehiculo, modelo, descripccion, parseInt(precio), vendido ]
 
         const connection = await getConnection()
-        const Carro = await connection.query(`call importadora_proyecto.new_procedure(?,?,?,?,?,?,?,@uuidcaro);
+        const [Carro] = await connection.query(`call new_procedure(?,?,?,?,?,?,?,@uuidcaro);
        `, params)
 
         req.files.forEach(async x=>{
@@ -321,7 +320,7 @@ const createCita = async (req, res) => {
         const params = [idCarro, fechaInicio, fechaFin, idEstadoCita, idUsuario]
 
         const connection = await getConnection()
-        const Cita = await connection.query(`call importadora_proyecto.new_procedure2(?,?,?,?,?,@uuidCita);
+        const Cita = await connection.query(`call new_procedure2(?,?,?,?,?,@uuidCita);
        `, params)
 
         
@@ -334,7 +333,7 @@ const createCita = async (req, res) => {
 const readCitas= async (req, res) => {
     try {
         const connection = await getConnection()
-        const query = await connection.query(`SELECT cita.idCita, 
+        const [query] = await connection.query(`SELECT cita.idCita, 
         carro.marca, 
         carro.linea, 
         carro.modelo, 

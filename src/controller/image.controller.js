@@ -5,7 +5,7 @@ module.exports = {
         const idImage  = req.params.idImage
 
         const connection = await getConnection()
-        const query = await connection.query("DELETE FROM importadora_proyecto.imagenes WHERE idImagenes = ?;", [idImage])
+        const query = await connection.query("DELETE FROM imagenes WHERE idImagenes = ?;", [idImage])
         
         res.send(query)
     },
@@ -23,7 +23,7 @@ module.exports = {
 
         const connection = await getConnection()
         console.log(req.files)
-        const query = await connection.query(`SELECT cita.idCita, 
+        const [query] = await connection.query(`SELECT cita.idCita, 
         carro.marca, 
         carro.linea, 
         carro.modelo, 
